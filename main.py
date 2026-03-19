@@ -7,7 +7,7 @@ diseño estructural óptimo bajo las normativas de la FAA.
 """
 
 from src.evaluador_pavi import EvaluadorPavimento
-from src.optimizador_ga import AlgoritmoGenetico
+from src.optimizador_ga import AlgoritmoGenetico, op_recosido_simulado
 
 
 def mostrar_resultados(data):
@@ -59,37 +59,38 @@ def principal():
     # --- PARÁMETROS DE ENTRADA ---
     # Aeronave de diseño y módulo de la subrasante según el proyecto
     AVION_DISENO = "A400M TLL1"
-    E_SUELO = 40.0
+    E_SUELO = 40.0 # En MPa
     
     # Inicialización del evaluador (Lógica de ingeniería)
     evaluador = EvaluadorPavimento(AVION_DISENO, E_SUELO)
     
-    # Impresión de datos de entrada en consola (Requerimiento de llamada)
+    # Impresión de datos de entrada
     print("--- DATOS DE ENTRADA ---")
     print(f"Aeronave de Diseño: {AVION_DISENO}")
     print(f"Módulo Subgrade:    {E_SUELO} MPa")
     print(f"Configuración:      {evaluador.n_capas} capas automáticas")
     print("------------------------\n")
     
-    # Definición de rangos de búsqueda (en pulgadas)
-    # Rangos para Carpeta (HMA), Base y Subbase
-    limites_busqueda = [(3.9, 5.9), (6.0, 15.0), (10.0, 25.0)]
+    # Definición de rangos de búsqueda en pulgadas (Estándar FAA)
+    # Rangos para Carpeta (HMA), Base (BG/BTA) y Subbase (SB)
+    # HMA: 3-8 pulg, Base: 6-18 pulg, Subbase: 6-25 pulg
+    limites_busqueda = [(3.0, 8.0), (6.0, 18.0), (6.0, 25.0)]
     
     # Configuración del Algoritmo Genético
-    # Se inyecta la función de aptitud del evaluador para mantener modularidad
+    # Mayor población y generaciones para manejar el fitness normalizado
     ga = AlgoritmoGenetico(
         fitness_fn=evaluador.calcular_costo_aptitud,
         limites=limites_busqueda,
-        pop_size=12,
-        gens=20
+        pop_size=25,
+        gens=40
     )
     
     # Inicio del proceso evolutivo
-    print("Iniciando búsqueda de diseño óptimo...")
-    mejor_ind, fitness, cdf_final = ga.ejecutar_optimizacion()
+    print("Iniciando búsqueda de diseño óptimo (FAARFIELD Model)...")
+    MejorInd, Fit, CdfFinal = ga.ejecutar_optimizacion()
     
     # Extracción de reporte técnico y muestra de resultados
-    reporte = evaluador.obtener_resumen_tecnico(mejor_ind, cdf_final)
+    reporte = evaluador.obtener_resumen_tecnico(MejorInd, CdfFinal)
     mostrar_resultados(reporte)
 
 

@@ -1,0 +1,3 @@
+# GA-FAARFIELD-Optimizer Dependencies
+pythonnet
+# Add other dependencies if needed in the future

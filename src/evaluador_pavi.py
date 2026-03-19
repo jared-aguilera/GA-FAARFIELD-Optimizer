@@ -21,66 +21,98 @@ class EvaluadorPavimento:
         self.ac_data = self.motor.buscar_aeronave(avion_id)
         
         # Selección automática de capas según módulo de terreno natural
-        self.n_capas = 5 if subgrade_e < 30 else 3
+        # FAA: Estructura de 3 capas (HMA, P-209, Subgrade) o 5 capas (con subbase y base tratada)
+        self.n_capas = 5 if subgrade_e < 35 else 3
         self.paso_10mm = 0.3937  # Equivalente a 10 mm en pulgadas
+
+        # Parámetros de diseño (de la notebook)
+        self.periodo_diseno = 20.0
+        self.target_cdf_s = 0.98
+        self.target_cdf_h = 0.98
+
+        # Rangos de normalización
+        self.norm_range = {
+            "cdf_s": (0.96, 0.99),
+            "cdf_h": (0.96, 0.99),
+            "vida": (20.0, 22.0)
+        }
+
+        # Pesos de fitness (w1:Subgrade, w2:HMA, w3:Thickness/Cost)
+        self.weights = (0.5, 0.3, 0.2)
+
+    def normalizar(self, valor, vmin, vmax):
+        """Escala un valor al rango [0, 1] respecto a los límites vmin y vmax."""
+        if vmax == vmin:
+            return 0.0
+        return abs(valor - vmin) / (vmax - vmin)
 
     def calcular_costo_aptitud(self, cromosomas):
         """
-        Evalúa un diseño candidato y devuelve su aptitud (fitness).
+        Evalúa un diseño candidato usando errores normalizados ponderados.
         
         Args:
-            cromosomas (list): Lista de espesores sugeridos por el GA.
+            cromosomas (list): Lista de espesores en pulgadas.
             
         Returns:
             tuple: (valor_aptitud, cdf_calculado)
         """
-        # Ajuste a incrementos de 10mm para cumplimiento normativo
+        # Ajuste a incrementos de 10mm
         espesores = [round(e / self.paso_10mm) * self.paso_10mm for e in cromosomas]
         
-        # Asignación de módulos elásticos por jerarquía de capas
+        # Definición de módulos realistas (conforme a FAA)
+        # HMA ~ 400,000 psi (~2758 MPa), Base ~ 30,000 psi, Subbase ~ 15,000 psi
         if self.n_capas == 3:
-            modulos = [400000, 20000, self.subgrade_e]
+            modulos = [400000.0, 30000.0, self.subgrade_e * 145.038] # Convertir MPa a psi para el motor
         else:
-            modulos = [400000, 25000, 15000, 8000, self.subgrade_e]
+            modulos = [400000.0, 40000.0, 30000.0, 20000.0, self.subgrade_e * 145.038]
             
-        deformacion = self.motor.calcular_respuesta(
-            espesores, modulos, self.ac_data, espesores[0]
-        )
+        # El motor espera pulgadas y psi generalmente en estas configuraciones
+        respuesta = self.motor.calcular_respuesta(espesores, modulos, self.ac_data, sum(espesores[:-1]))
         
-        # Estimación de CDF basada en deformación admisible (Objetivo: 0.98)
-        limite_falla = 0.0004
-        cdf = deformacion / limite_falla
+        # El motor actual devuelve una deformación vertical en la subrasante
+        # Convertimos deformación a CDF usando la ley de fatiga FAA: Nf = (0.004 / eps_v) ^ 6
+        # Simplificación de la notebook:
+        cdf_s = respuesta / 0.000411 # Ajustado para que ~0.0004 sea 1.0 CDF
         
-        # Función de penalización por incumplimiento de fatiga
-        penalizacion = 0
-        if cdf > 0.98:
-            penalizacion = (cdf - 0.98) * 100000
+        # Normalización de errores para fitness
+        target_n = self.normalizar(self.target_cdf_s, *self.norm_range["cdf_s"])
+        actual_n = self.normalizar(cdf_s, *self.norm_range["cdf_s"])
+        
+        error_cdf = abs(target_n - actual_n)
+        error_grosor = sum(espesores) / 50.0 # Normalización básica de espesor total
+        
+        # Fitness final (Minimización)
+        aptitud = (self.weights[0] * error_cdf) + (self.weights[2] * error_grosor)
+        
+        # Penalización si CDF excede severamente el máximo
+        if cdf_s > 1.2:
+            aptitud += 10.0
             
-        return sum(espesores) + penalizacion, cdf
+        return aptitud, cdf_s
 
-    def obtener_resumen_tecnico(self, diseño, cdf):
+    def obtener_resumen_tecnico(self, diseño, cdf_s):
         """
         Genera el reporte final de 12 puntos para el diseño optimizado.
         """
-        vida = 20 / cdf if cdf > 0 else 100.0
-        acr = self.ac_data["peso"] / 2000.0
+        vida = 20 / cdf_s if cdf_s > 0 else 100.0
+        acr = self.ac_data["peso"] / 2000.0 if self.ac_data else 50.0
         
-        # Normalización de espesores para salida en mm
+        # Espesores en mm para reporte
         espesores_mm = [round(e * 25.4 / 10) * 10 for e in diseño]
         while len(espesores_mm) < 5:
             espesores_mm.append(0)
             
         return {
-            "cdf_s": cdf,
-            "cdf_h": cdf * 0.85,
+            "cdf_s": cdf_s,
+            "cdf_h": cdf_s * 0.9, # Estimación ponderada
             "vida": min(vida, 100.0),
-            "tipo": "Nueva Flexible",
+            "tipo": "Flexible (FAA Standar)",
             "acr": acr,
-            "pcr": f"{acr * 1.08:.1f}/F/B/X/T",
+            "pcr": f"{acr * 1.05:.1f}/F/B/X/T",
             "h_hma": espesores_mm[0],
             "h_b": espesores_mm[1],
             "h_sb": espesores_mm[2],
             "h_c4": espesores_mm[3],
             "h_c5": espesores_mm[4],
-            "e_hma": 3500
-        }
+            "e_hma": 2758 # MPa aprox 400ksi
+        }
