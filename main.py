@@ -1,77 +1,97 @@
-import sys
-import os
-import pandas as pd
-from src.optimizador_ga import OptimizadorPavimento
+"""
+Módulo Principal: Orquestador del Optimizador GA-FAARFIELD.
 
-def principal():
-    print("====================================================")
-    print("     OPTIMIZADOR GA-FAARFIELD - PROTOTIPO FINAL     ")
-    print("====================================================\n")
-    print("Cargo csv\n")
-    csvFile = pd.read_csv("../data/aircraft.csv")
-    print(csvFile)
+Este script coordina la ejecución del sistema modular, integrando la lógica
+de ingeniería de pavimentos con el algoritmo genético para encontrar el
+diseño estructural óptimo bajo las normativas de la FAA.
+"""
 
-    flota = [
-        {'nombre': 'A320-200 Twin std', 'annual_deps': 3775, 'growth': 10.0},
-        {'nombre': 'B737-800', 'annual_deps': 8, 'growth': 4.0},
-        {'nombre': 'A321-200 std', 'annual_deps': 180, 'growth': 5.0}
-    ]
-    vida_diseno = 20
-    # El usuario cambió el módulo a 60 MPa en su última ejecución
-    subgrade_e = 40
-    
-    print(f"Configuración de Diseño:")
-    print(f"- Periodo de diseño: {vida_diseno} años")
-    print(f"- Módulo Subgrade: {subgrade_e} MPa")
-    print(f"- Flota: {len(flota)} aeronaves cargadas.\n")
-    
-    print("Iniciando optimización por Algoritmo Genético...")
-    optimizador = OptimizadorPavimento(flota, vida_diseno, subgrade_e)
-    mejor = optimizador.evolucionar()
-    
-    if not mejor:
-        print("No se encontró una solución válida.")
-        return
+from src.evaluador_pavi import EvaluadorPavimento
+from src.optimizador_ga import AlgoritmoGenetico
 
-    ind, fit, res = mejor
-    
-    def fmt_cdf(v):
-        if v > 10.0: return f"{v:.1f} (REQUERIDO: AUMENTAR ESPESOR)"
-        if v > 1.0: return f"{v:.4f} (FALLA)"
-        return f"{v:.4f} (PASO)"
 
+def mostrar_resultados(data):
+    """
+    Imprime en la terminal el reporte técnico de 12 puntos.
+
+    Presenta los resultados finales de la optimización, incluyendo
+    daño acumulado (CDF), vida útil, clasificación ACR/PCR y espesores.
+
+    Args:
+        data (dict): Diccionario generado por el evaluador con los resultados.
+    """
     print("\n" + "="*52)
     print("           RESULTADOS DE OPTIMIZACIÓN               ")
     print("="*52)
-    print(f"1.  Subgrade CDF:         {fmt_cdf(res['Subgrade_CDF'])}")
-    print(f"2.  HMA CDF:              {fmt_cdf(res['HMA_CDF'])}")
-    print(f"3.  Vida Útil (Fatiga):   {res['Life']:.1f} años")
-    print(f"4.  Tipo de Estructura:   Nueva Flexible")
-    print(f"5.  ACR Mayor Flota:      {res['Max_ACR']:.1f}")
-    print(f"6.  PCR Calculado:        {res['PCR']}")
-    
-    # Nombres dinámicos para las capas para completar los 12 parámetros
-    labels = [
-        "7.  Espesor Carpeta (HMA):",
-        "8.  Espesor Base (B):     ",
-        "9.  Espesor Subbase (SB): ",
-        "10. Espesor de Capa 4:    ",
-        "11. Espesor de Capa 5:    "
-    ]
-    
-    for i in range(5):
-        if i < len(ind):
-            print(f"{labels[i]} {ind[i]} mm")
-        else:
-            print(f"{labels[i]} 0 mm")
+    print(f"1.  Subgrade CDF:         {data['cdf_s']:.4f} "
+          f"({'PASO' if data['cdf_s'] <= 0.98 else 'FALLA'})")
+    print(f"2.  HMA CDF:              {data['cdf_h']:.4f} "
+          f"({'PASO' if data['cdf_h'] <= 0.98 else 'FALLA'})")
+    print(f"3.  Vida Útil (Fatiga):   {data['vida']:.1f} años")
+    print(f"4.  Tipo de Estructura:   {data['tipo']}")
+    print(f"5.  ACR Mayor Flota:      {data['acr']:.1f}")
+    print(f"6.  PCR Calculado:        {data['pcr']}")
+    print(f"7.  Espesor Carpeta (HMA): {data['h_hma']:.0f} mm")
+    print(f"8.  Espesor Base (B):      {data['h_b']:.0f} mm")
+    print(f"9.  Espesor Subbase (SB):  {data['h_sb']:.0f} mm")
+    print(f"10. Espesor de Capa 4:    {data['h_c4']:.0f} mm")
+    print(f"11. Espesor de Capa 5:    {data['h_c5']:.0f} mm")
+    print(f"12. Módulo E Carpeta:     {data['e_hma']} MPa")
+    print("====================================================\n")
 
-    print(f"12. Módulo E Carpeta:     3500 MPa")
-    print("="*52)
-    
-    if res['Subgrade_CDF'] > 1.0 or res['HMA_CDF'] > 1.0:
-        print("\n[ALERTA]: El diseño propuesto NO cumple con la resistencia necesaria.")
+    if data['cdf_s'] <= 0.98:
+        print("[ÉXITO]: El diseño cumple satisfactoriamente con el CDF.")
     else:
-        print("\n[ÉXITO]: El diseño es óptimo y cumple con los estándares FAA.")
+        print("[AVISO]: Se requiere mayor espesor para cumplir con el CDF.")
+
+
+def principal():
+    """
+    Ejecuta el flujo completo de optimización.
+    
+    Define los parámetros de diseño, inicializa los módulos desacoplados,
+    ejecuta el algoritmo genético y despliega los informes.
+    """
+    print("====================================================")
+    print("     OPTIMIZADOR GA-FAARFIELD - SISTEMA MODULAR     ")
+    print("====================================================\n")
+    
+    # --- PARÁMETROS DE ENTRADA ---
+    # Aeronave de diseño y módulo de la subrasante según el proyecto
+    AVION_DISENO = "A400M TLL1"
+    E_SUELO = 40.0
+    
+    # Inicialización del evaluador (Lógica de ingeniería)
+    evaluador = EvaluadorPavimento(AVION_DISENO, E_SUELO)
+    
+    # Impresión de datos de entrada en consola (Requerimiento de llamada)
+    print("--- DATOS DE ENTRADA ---")
+    print(f"Aeronave de Diseño: {AVION_DISENO}")
+    print(f"Módulo Subgrade:    {E_SUELO} MPa")
+    print(f"Configuración:      {evaluador.n_capas} capas automáticas")
+    print("------------------------\n")
+    
+    # Definición de rangos de búsqueda (en pulgadas)
+    # Rangos para Carpeta (HMA), Base y Subbase
+    limites_busqueda = [(3.9, 5.9), (6.0, 15.0), (10.0, 25.0)]
+    
+    # Configuración del Algoritmo Genético
+    # Se inyecta la función de aptitud del evaluador para mantener modularidad
+    ga = AlgoritmoGenetico(
+        fitness_fn=evaluador.calcular_costo_aptitud,
+        limites=limites_busqueda,
+        pop_size=12,
+        gens=20
+    )
+    
+    # Inicio del proceso evolutivo
+    print("Iniciando búsqueda de diseño óptimo...")
+    mejor_ind, fitness, cdf_final = ga.ejecutar_optimizacion()
+    
+    # Extracción de reporte técnico y muestra de resultados
+    reporte = evaluador.obtener_resumen_tecnico(mejor_ind, cdf_final)
+    mostrar_resultados(reporte)
+
 
 if __name__ == "__main__":
     principal()
