@@ -48,7 +48,7 @@ class AlgoritmoGenetico:
             if not mejor_global or mejor_actual[1] < mejor_global[1]:
                 mejor_global = mejor_actual
                 
-            print(f"Generación {g+1:02d} | Costo: {mejor_actual[1]:.2f} | CDF: {mejor_actual[2]:.4f}")
+            print(f"Generación {g+1:02d} | Costo: {mejor_actual[1]:.2f} | Métrica Extra: {mejor_actual[2]:.4f}")
 
             # Selección de élite y reproducción
             padres = [e[0] for e in evaluaciones[:self.pop_size // 2]]
@@ -116,7 +116,7 @@ class op_recosido_simulado:
             if not mejor_global or mejor_actual[1] < mejor_global[1]:
                 mejor_global = mejor_actual
                 
-            print(f"Generación {g+1:02d} | Costo: {mejor_actual[1]:.2f} | CDF: {mejor_actual[2]:.4f}")
+            print(f"Generación {g+1:02d} | Costo: {mejor_actual[1]:.2f} | Métrica Extra: {mejor_actual[2]:.4f}")
 
             # Selección de élite y reproducción
             padres = [e[0] for e in evaluaciones[:self.pop_size // 2]]

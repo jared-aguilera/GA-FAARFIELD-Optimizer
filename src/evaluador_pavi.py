@@ -51,23 +51,34 @@ class EvaluadorPavimento:
         Evalúa un diseño candidato usando errores normalizados ponderados.
         
         Args:
-            cromosomas (list): Lista de espesores en pulgadas.
+            cromosomas (list): Lista de variables [t_hma, t_base, t_subbase, e_hma].
             
         Returns:
             tuple: (valor_aptitud, cdf_calculado)
         """
-        # Ajuste a incrementos de 10mm
-        espesores = [round(e / self.paso_10mm) * self.paso_10mm for e in cromosomas]
+        t_hma, t_base, t_subbase, e_hma_mpa = cromosomas
         
-        # Definición de módulos realistas (conforme a FAA)
-        # HMA ~ 400,000 psi (~2758 MPa), Base ~ 30,000 psi, Subbase ~ 15,000 psi
+        # Ajuste a incrementos de 10mm
+        t_hma = round(t_hma / self.paso_10mm) * self.paso_10mm
+        t_base = round(t_base / self.paso_10mm) * self.paso_10mm
+        t_subbase = round(t_subbase / self.paso_10mm) * self.paso_10mm
+        
+        e_hma_psi = e_hma_mpa * 145.038
+        e_p209_psi = 250.0 * 145.038
+        e_p154_psi = 150.0 * 145.038
+        e_p152_psi = 100.0 * 145.038
+        e_subgrade_psi = self.subgrade_e * 145.038
+        
         if self.n_capas == 3:
-            modulos = [400000.0, 30000.0, self.subgrade_e * 145.038] # Convertir MPa a psi para el motor
+            espesores = [t_hma, t_base, 0.0]
+            modulos = [e_hma_psi, e_p209_psi, e_subgrade_psi]
         else:
-            modulos = [400000.0, 40000.0, 30000.0, 20000.0, self.subgrade_e * 145.038]
+            t_p152 = round(8.0 / self.paso_10mm) * self.paso_10mm
+            espesores = [t_hma, t_base, t_subbase, t_p152, 0.0]
+            modulos = [e_hma_psi, e_p209_psi, e_p154_psi, e_p152_psi, e_subgrade_psi]
             
-        # El motor espera pulgadas y psi generalmente en estas configuraciones
-        respuesta = self.motor.calcular_respuesta(espesores, modulos, self.ac_data, sum(espesores[:-1]))
+        z_eval = sum(espesores[:-1])
+        respuesta = self.motor.calcular_respuesta(espesores, modulos, self.ac_data, z_eval)
         
         # El motor actual devuelve una deformación vertical en la subrasante
         # Convertimos deformación a CDF usando la ley de fatiga FAA: Nf = (0.004 / eps_v) ^ 6
@@ -97,10 +108,15 @@ class EvaluadorPavimento:
         vida = 20 / cdf_s if cdf_s > 0 else 100.0
         acr = self.ac_data["peso"] / 2000.0 if self.ac_data else 50.0
         
+        t_hma, t_base, t_subbase, e_hma_mpa = diseño
+        
+        if self.n_capas == 3:
+            espesores_pulg = [t_hma, t_base, 0.0, 0.0, 0.0]
+        else:
+            espesores_pulg = [t_hma, t_base, t_subbase, 8.0, 0.0]
+            
         # Espesores en mm para reporte
-        espesores_mm = [round(e * 25.4 / 10) * 10 for e in diseño]
-        while len(espesores_mm) < 5:
-            espesores_mm.append(0)
+        espesores_mm = [round(e * 25.4 / 10) * 10 for e in espesores_pulg]
             
         return {
             "cdf_s": cdf_s,
@@ -114,5 +130,5 @@ class EvaluadorPavimento:
             "h_sb": espesores_mm[2],
             "h_c4": espesores_mm[3],
             "h_c5": espesores_mm[4],
-            "e_hma": 2758 # MPa aprox 400ksi
+            "e_hma": round(e_hma_mpa, 1)
         }
