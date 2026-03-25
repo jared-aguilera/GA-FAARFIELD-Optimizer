@@ -134,15 +134,21 @@ def funcion_FAARFIELD(Ft, pd, td, es, espesores=None, modulos=None):
     subgrade_e_psi = es["modulo_mpa"] * 145.038
     
     if espesores is None or modulos is None:
-        if n_capas == 3:
-            espesores = [4.0, 8.0, 0.0]
-            modulos = [200000.0, 36259.5, subgrade_e_psi]
-        elif n_capas == 4:
-            espesores = [4.0, 6.0, 8.0, 0.0]
-            modulos = [200000.0, 36259.5, 21755.7, subgrade_e_psi]
-        else: # 5 capas
-            espesores = [4.0, 6.0, 8.0, 8.0, 0.0]
-            modulos = [200000.0, 36259.5, 21755.7, 14503.8, subgrade_e_psi]
+        # Si no se pasan desde el exterior, revisamos si vienen en el dict de estructura 'es'
+        if "espesores" in es and "modulos" in es:
+            espesores = es["espesores"]
+            modulos = es["modulos"]
+        else:
+            # Defaults históricos (si no hay datos directos)
+            if n_capas == 3:
+                espesores = [4.0, 8.0, 0.0]
+                modulos = [200000.0, 36259.5, subgrade_e_psi]
+            elif n_capas == 4:
+                espesores = [4.0, 6.0, 8.0, 0.0]
+                modulos = [200000.0, 36259.5, 21755.7, subgrade_e_psi]
+            else: # 5 capas
+                espesores = [4.0, 6.0, 8.0, 8.0, 0.0]
+                modulos = [200000.0, 36259.5, 21755.7, 14503.8, subgrade_e_psi]
             
     z_eval = sum(espesores[:-1]) # Profundidad hasta subrasante
     cdf_subgrade = 0.0
@@ -239,20 +245,11 @@ if __name__ == "__main__":
                 break
             print(" -> Error: Por favor, ingresa solamente 1 o 2.")
         
-        # --- VALIDACIÓN DE CATEGORÍA DE SUBRASANTE (Es) ---
-        print("\nCategorías de Subrasante según módulo E (Es):")
-        print("A o B -> 3 capas")
-        print("C o D -> 4 capas")
-        print("D' o D'' -> 5 capas")
-        while True:
-            es_cat = input("Ingresa la categoría de la subrasante (A, B, C, D, D', D'') [Por defecto A]: ").strip().upper()
-            es_cat = es_cat.replace("''", '"') # Normalizar si escriben dos comillas simples
-            if not es_cat:
-                es_cat = "A"
-                break
-            if es_cat in ['A', 'B', 'C', 'D', "D'", 'D"']:
-                break
-            print(" -> Error: Categoría no válida. Opciones permitidas: A, B, C, D, D', D''.")
+        # --- ENTRADA DEL MÓDULO DE LA SUBRASANTE (Sustituye a Categorías) ---
+        print("\nDeterminación de Estructura por Módulo de Subrasante (E):")
+        print("E >= 69 MPa -> 3 capas (HMA, Base, Subgrado)")
+        print("35 <= E < 69 MPa -> 4 capas (HMA, Base, Subbase, Subgrado)")
+        print("E < 35 MPa -> 5 capas (HMA, Base, Subbase, Subrasante, Subgrado)")
         
         # --- VALIDACIÓN EL MÓDULO DE LA SUBRASANTE ---
         while True:
@@ -267,11 +264,45 @@ if __name__ == "__main__":
             except ValueError:
                 print(" -> Error: Ingresa un número válido para el módulo.")
         
-        if es_cat in ['A', 'B']: n_capas = 3
-        elif es_cat in ['C', 'D']: n_capas = 4
-        else: n_capas = 5
+        if es_mod_val >= 69:
+            n_capas_val = 3
+        elif 35 <= es_mod_val < 69:
+            n_capas_val = 4
+        else:
+            n_capas_val = 5
+
+        # --- PETICIÓN DINÁMICA DE ESPESORES Y MÓDULOS ---
+        espesores_user = []
+        modulos_user = []
+        print(f"\n[+] Configuración de {n_capas_val} capas detectada. Por favor ingresa los datos:")
         
-        es = {"categoria": es_cat, "modulo_mpa": es_mod_val, "n_capas": n_capas}
+        for i in range(1, n_capas_val):
+            if i == 1: nombre_capa = "Carpeta (HMA)"
+            elif i == 2: nombre_capa = "Base"
+            elif i == 3: nombre_capa = "Subbase"
+            elif i == 4: nombre_capa = "Subrasante/Estabilizada"
+            else: nombre_capa = f"Capa {i}"
+            
+            while True:
+                try:
+                    esp = float(input(f"    -> Espesor de {nombre_capa} (pulgadas): "))
+                    mod = float(input(f"    -> Módulo de {nombre_capa} (MPa): "))
+                    espesores_user.append(esp)
+                    modulos_user.append(mod * 145.038) # Convertir a PSI para el motor
+                    break
+                except ValueError:
+                    print("     [X] Error: Ingresa un valor numérico válido.")
+
+        # Capa final: Subrasante (espesor 0.0)
+        espesores_user.append(0.0)
+        modulos_user.append(es_mod_val * 145.038)
+
+        es = {
+            "modulo_mpa": es_mod_val, 
+            "n_capas": n_capas_val, 
+            "espesores": espesores_user, 
+            "modulos": modulos_user
+        }
         
         # Procesamos la fórmula matemática para todos los aviones en la flota
         Ft = calcular_operaciones_totales(Ft, pd)
@@ -281,7 +312,7 @@ if __name__ == "__main__":
         print("="*50)
         print(f"Periodo de Diseño (Pd): {pd} años")
         print(f"Tipo de estructura (Td): {td}")
-        print(f"Subrasante (Es): Categoría {es['categoria']}, Módulo {es['modulo_mpa']} MPa, {es['n_capas']} capas\n")
+        print(f"Subrasante (Es): Módulo {es['modulo_mpa']} MPa, total de {es['n_capas']} capas analizadas\n")
         
         for index, avion in enumerate(Ft, 1):
             print(f"{index}. {avion['nombre']}")
