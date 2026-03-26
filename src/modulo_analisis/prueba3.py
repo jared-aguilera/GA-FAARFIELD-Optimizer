@@ -1,7 +1,7 @@
 """
 =============================================================
   Inspector de DLL .NET con pythonnet
-  DLL: LEAFClassLib.dll (FAARFIELD)
+  DLL: FaarFieldModel.dll (FAARFIELD)
 =============================================================
 """
 
@@ -14,7 +14,7 @@ import System.Reflection
 # CONFIGURACIÓN — ajusta esta ruta
 # ─────────────────────────────────────────────
 DIR_BIN = r"C:\Users\x\Documents\GitHub\GA-FAARFIELD-Optimizer\bin"   # <── cambia esto
-DLL_NAME = "LEAFClassLib.dll"
+DLL_NAME = "FaarFieldModel.dll"
 DLL_PATH = os.path.abspath(os.path.join(DIR_BIN, DLL_NAME))
 
 # ─────────────────────────────────────────────
