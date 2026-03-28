@@ -37,10 +37,12 @@ def test():
         for k, v in resultados.items():
             print(f"  > {k}: {v}")
             
-        print("\n✅ El proceso se ha vinculado correctamente a las librerías oficiales.")
+        print("\n[OK] El proceso se ha vinculado correctamente a las librerias oficiales.")
 
     except Exception as e:
-        print(f"❌ Error en la prueba: {e}")
+        import traceback
+        print(f"[Error] Error en la prueba: {e}")
+        traceback.print_exc()
 
 if __name__ == "__main__":
     test()

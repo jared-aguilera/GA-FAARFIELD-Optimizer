@@ -11,9 +11,10 @@ import System
 import System.Reflection
 
 # ─────────────────────────────────────────────
-# CONFIGURACIÓN — ajusta esta ruta
+# CONFIGURACIÓN
 # ─────────────────────────────────────────────
-DIR_BIN = r"C:\Users\x\Documents\GitHub\GA-FAARFIELD-Optimizer\bin"   # <── cambia esto
+DIR_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DIR_BIN = os.path.join(DIR_ROOT, "bin")
 DLL_NAME = "FaarFieldModel.dll"
 DLL_PATH = os.path.abspath(os.path.join(DIR_BIN, DLL_NAME))
 

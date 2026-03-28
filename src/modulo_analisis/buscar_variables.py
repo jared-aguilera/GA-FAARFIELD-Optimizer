@@ -10,7 +10,7 @@ import clr
 import System
 import System.Reflection
 
-DIR_ROOT = r"C:\Users\x\Documents\GitHub\GA-FAARFIELD-Optimizer"
+DIR_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DIR_BIN = os.path.join(DIR_ROOT, "bin")
 
 # Términos a buscar (en minúsculas para búsqueda insensible a mayúsculas)

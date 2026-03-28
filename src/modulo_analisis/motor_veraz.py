@@ -14,7 +14,8 @@ class MotorVeraz:
     def __init__(self, bin_dir=None):
         # Directorio de las DLLs
         if bin_dir is None:
-            self.bin_dir = r"C:\Users\x\Documents\GitHub\GA-FAARFIELD-Optimizer\bin"
+            dir_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            self.bin_dir = os.path.join(dir_root, "bin")
         else:
             self.bin_dir = bin_dir
             
@@ -30,15 +31,17 @@ class MotorVeraz:
             clr.AddReference(os.path.join(self.bin_dir, "LEAFClassLib.dll"))
             
             # Importar namespaces de .NET
-            from FaarFieldModel import Section, AirplaneInfo, FaarFieldModelFactory
+            from FaarFieldModel import Section, AirplaneInfo, FaarFieldModelFactory, Weight, UsCustomary
             from FaarFieldAnalysis import FEDFAA1, CDF
             
             self.ModelFactory = FaarFieldModelFactory
             self.SectionClass = Section
             self.AirplaneClass = AirplaneInfo
+            self.WeightClass = Weight
+            self.UsCustomaryClass = UsCustomary
             self.AnalysisEngine = FEDFAA1
             
-            print("✅ Librerías FAARFIELD cargadas con éxito.")
+            print("[OK] Librerias FAARFIELD cargadas con exito.")
         except Exception as e:
             raise RuntimeError(f"Error al cargar DLLs de FAARFIELD: {e}")
 
@@ -46,8 +49,9 @@ class MotorVeraz:
         """
         Configura la sección de pavimento (espesores en pulgadas, módulos en MPa).
         """
-        # Usamos la Factory oficial para evitar NullReferenceException
-        self.seccion = self.ModelFactory.CreateSection()
+        # Inicializar usando la instancia de la Factory oficial
+        factory = self.ModelFactory()
+        self.seccion = factory.CreateSection(factory)
         self.seccion.SectionSubgradeCategory = "C" 
         
         # Guardamos los datos para el proceso de cálculo
@@ -68,10 +72,11 @@ class MotorVeraz:
         }
 
         try:
-            # 1. Crear la info del avión usando la Factory oficial
-            ac = self.ModelFactory.CreateAirplaneInfo()
+            # 1. Crear la info del avión usando la clase base
+            ac = self.AirplaneClass()
             ac.Name = nombre_avion
-            ac.GrossWeight = peso_kg * 2.20462 # Convertir a libras
+            peso_lb = float(peso_kg * 2.20462) # Convertir a libras
+            ac.GrossWeight = self.WeightClass(peso_lb, self.UsCustomaryClass())
             
             # 2. El proceso oficial de la DLL calcula el daño
             # Nota: Aquí invocaríamos a FaarFieldAnalysis para correr el motor LEAF

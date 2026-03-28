@@ -3,12 +3,13 @@ import clr
 import System
 import System.Reflection
 
-BIN_DIR = r"C:\Users\x\Documents\GitHub\GA-FAARFIELD-Optimizer\bin"
+DIR_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+BIN_DIR = os.path.join(DIR_ROOT, "bin")
 SEARCH_TERMS = ['cdf', 'pcr', 'acr', 'mayor', 'life', 'hma', 'subgrade', 'max']
 DLLS = ['FaarFieldModel.dll', 'FaarFieldAnalysis.dll', 'ACClassLib.dll', 'LEAFClassLib.dll']
 
 def search():
-    output_path = r"C:\Users\x\Documents\GitHub\GA-FAARFIELD-Optimizer\src\modulo_analisis\busqueda_detalle.txt"
+    output_path = os.path.join(os.path.dirname(__file__), "busqueda_detalle.txt")
     with open(output_path, "w", encoding="utf-8") as f:
         for dll_name in DLLS:
             path = os.path.join(BIN_DIR, dll_name)
