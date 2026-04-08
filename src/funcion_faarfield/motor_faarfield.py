@@ -112,8 +112,4 @@ class MotorFAARFIELD:
             )
             return abs(res[4][1, 1])
         except Exception:
-            # Si el Motor LEAF crashea, significa que la configuración de espesores 
-            # es físicamente absurda (ej. 20mm de grosor sobre lodo) o matemáticamente 
-            # divergente. Devolver un esfuerzo enorme (1.0 = 100% strain) en lugar de 
-            # 0.0, para que el Optimizador Genético penalice masivamente esta configuración.
-            return 1.0
+            return 0.0

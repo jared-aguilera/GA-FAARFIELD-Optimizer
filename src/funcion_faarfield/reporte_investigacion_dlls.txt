@@ -1,0 +1,42 @@
+REPORTE TÉCNICO: ANÁLISIS DE INTEROPERABILIDAD Y EXTRACCIÓN DE DLLs DE FAARFIELD
+----------------------------------------------------------------------------------
+Para: Profesor Asesor / Equipo de Trabajo
+Tema: Limitaciones de Arquitectura de la API de FAARFIELD
+
+1. INTRODUCCIÓN Y PROBLEMA ORIGINAL
+Durante el desarrollo del Optimizador Genético, se intentó automatizar el cálculo de los 5 parámetros oficiales de diseño (Subgrade CDF, HMA CDF, Life, ACR mayor, PCR) evitando cualquier cálculo "teórico/manual" en el código Python de nuestro proyecto.
+Para ello, se extrajeron e importaron directamente las librerías precompiladas de la FAA desde el programa padre (`FaarFieldModel.dll` y `FaarFieldAnalysis.dll`). El objetivo era inyectar nuestras estructuras dentro del motor original y dejar que C# dictara el resultado nativamente.
+
+2. HALLAZGOS DE LA INGENIERÍA INVERSA Y PRUEBAS EMPÍRICAS
+Al utilizar `Python.NET` para crear instancias vivas de la clase principal `FEDFAA1` e invocar al cálculo de la librería (`FindLife`), comprobamos que es imposible operar FAARFIELD "bajo el capó" (arquitectura Headless pura).
+
+Para fines de claridad técnica, emplearemos una analogía: El programa FAARFIELD es como un automóvil. 
+- La DLL `LEAFClassLib.dll` es el motor puro.
+- La DLL `FaarFieldAnalysis.dll` es el tablero interactivo, el volante y el velocímetro.
+Las funciones finales de agregación de daño (Subgrade CDF, HMA CDF y Life) paradójicamente no están construidas como una "API" o librería dentro del motor, sino que los desarrolladores originales de FAARFIELD incrustaron las fórmulas y los ciclos lógicos "pegados" a los botones físicos (Windows Forms) de la pantalla. Tratar de invocar las matemáticas de `FaarFieldAnalysis.dll` invisiblemente en Python colapsa porque la DLL intenta modificar elementos en una pantalla que no existe.
+
+¿Cuáles son las pruebas concluyentes de este escenario arquitectónico?
+
+a) Eventos de Ratón detectados en el binario:
+En el archivo `busqueda_detalle.txt` generado previamente, específicamente en la Línea 459, se detectó la presencia textual de: `[Method] FEDFAA1.btnPCR_Click`
+La nomenclatura "btn" pertenece a instancias de botón estándar en lenguajes Visual, y "_Click" es el Event Handler del ratón. Ejecutar el código desde fuera choca con directivas ligadas a estas interacciones y a instancias de interfaz.
+
+b) Presencia de objetos de Dibujo atados al cálculo principal:
+Dentro de las clases de variables de cálculo ("CDF") vimos instanciados componentes como `CDFPic`, `OldCDFPic`, `NewCDFPic` y `ButtonCDFgraph`. La cadena "Pic" en el stack de .NET se refiere a módulos `PictureBox`. El proceso trata de dibujar las métricas conforme iteran, siendo incompatible con un proceso de consola.
+
+c) Estructura pobre en las firmas matemáticas:
+Si la DLL se prestara a consumo limpio por otra aplicación, la función nativa debería tener la forma: `FindLife(Estructura_Pavimento)`. Pero la extracción de la firma oficial C# arrojó el uso crudo de punteros bidimensionales operando sobre memoria global visual: `Single FindLife(Single, Single, Single, Boolean ByRef, Double[,] ByRef, ... )`
+
+3. CONCLUSIÓN CIENTÍFICA Y TRAYECTO A SEGUIR
+Intentar "hackear" la comunicación de `FaarFieldAnalysis.dll` es un antipatrón en ingeniería de software dado que requeriría "engañar" a la DLL haciéndole creer que tiene una ventana gráfica abierta.
+LA SOLUCIÓN VERAZ Y TRANSPARENTE es regresar a usar la pieza que SÍ cuenta con limpieza estructural: `LEAFClassLib.dll` (Layered Elastic Analysis System de la FAA).
+Este es el motor puro de esfuerzos y deformaciones (El motor de matrices físico).
+- Nuestro sistema en Python inyectará la flota en `LEAFClassLib.dll` obteniendo la deformación a la tensión/compresión perfecta (`eps_v`, `eps_h`).
+- Una vez extraídas esas medidas crudas, nosotros implementaremos en Python las formulaciones exactas estipuladas en el código fuente de la FAA.
+
+4. RESCATE DE LA DECOMPILACIÓN (EVIDENCIA FINAL DE ÉXITO)
+Tras abrir localmente una copia decompilada del código fuente de FAARFIELD con Visual Studio, identificamos los archivos clave:
+- `btnPCR_Click` demostró en código duro el control sobre herramientas gráficas como `btnGraphPCN`.
+- `modCDF.vb`: Se rescató exitosamente la función maestra `Sub LeafCDFFlex`. El escrutinio de este código fuente nos entregó las Ecuaciones de Fatiga ABSOLUTAS. Por ejemplo, hallamos que FAARFIELD usa `NtoFail = (0.004 / StrainMax) ^ 8.1` para la subrasante (Criterio StraightLine) y el Modelo RDEC complejo para el asfalto.
+
+Con estas directivas rescatadas, el Optimizador Genético no tiene que tocar la inestable Interfaz Gráfica vieja, porque ahora posee el "saber-hacer" exacto de las ecuaciones de daño en Python puro, multiplicando su velocidad exponencialmente a favor de nuestro equipo.

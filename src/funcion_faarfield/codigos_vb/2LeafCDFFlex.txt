@@ -1,0 +1,577 @@
+    Sub LeafCDFFlex(ByRef CDFMAX As Single, ByRef Depth As Double, ByRef Overflow As Boolean, ByRef StrainResponse(,) As Double)
+
+
+        ' Compute CDFs for all lateral offsets on flexible pavement.
+        Dim IA As Short ' Aircraft index.
+        Dim IOFF As Short
+        Dim CovToPass As Single
+        Dim ACCDF, ACCDFmax As Single
+        Dim Asphalt, SubGrade As Boolean
+        Dim ASPMOD, SubMod As Single
+        Dim NtoFail As Double
+        Dim AA, BB As Double
+        Dim FileErr As Boolean
+        Dim NGearLoads As Integer ' Number 0f individual gear loads to be applied
+        Dim IGearLoads As Integer ' to the pavement per aircraft.
+        Dim StrainMax, StrainMax2 As Double
+        Dim NGridby2, I As Integer
+        Dim GearLoadType As String ' Military letter designations in libGear$()
+        ' modified to allow multiple wheels in A380, etc.
+        Dim GearACType As Short ' Aircraft types are the constants below.
+        Const SingleWheelLoad As Short = 1
+        Const DualWheelMainGear As Short = 2
+        Const DualTandemMainGear As Short = 3 ' Includes six-wheels.
+        Const FourGearsinMain As Short = 4 ' Includes mixed four- and six-wheel gears.
+        Dim BBorig, AAorig, StrainBreak As Double
+        Dim lclCDF(MaxSectAC, NOFF) As Double
+        Dim ExtrType As Short ' kairat replace tandem
+        Dim Damage As Double ' kairat replace tandem
+        Dim IEval, IEvaly As Short ' kairat replace tandem
+        ReDim gStrain2(80) : ReDim gNtoFail(80)
+
+
+        Try
+
+            '  STRNH(IA) = Abs(STRNH(IA))  ' See LEDNEW sub RDAMTMP
+            '  STRNV(IA) = Abs(STRNV(IA)) '/ 0.885 ' in file CDF.FOR.
+            If Overflow = True Then ' Subgrade CDF required.
+                SubGrade = True : Asphalt = False ': STRNH(IA) = 0!
+            Else ' Asphalt CDF required.
+                Asphalt = True : SubGrade = False ': STRNV(IA) = 0.0002
+            End If
+
+            ASPMOD = Modulus(1)
+            SubMod = Modulus(NPLayers)
+            '  SubMod = 15000    ' Remove variation with subgrade modulus.
+            ' For variation of Poisson's ratio with subgrade modulus
+            ' see Sub WriteJuleaFile in FileProc.Bas.
+
+            If AlternateSG Then
+                Temp = 0.0!
+                If IterLayerChosen <> NPLayers - 1 Then
+                    For IA = 1 To julNPLayers - 1S
+                        Temp = Temp + julThick(IA)
+                        If Temp > EvalDepth(1) Then
+                            SubMod = julModulus(IA)
+                            Exit For
+                        End If
+                    Next IA
+                End If
+            End If
+
+            '  Debug.Print "Criteria "; ASPMOD; SubMod; NAC
+
+            For IOFF = 1 To NOFF
+                CDFFlexVal(IOFF) = 0.0! ':  CDFSUB(IOFF) = 0!
+            Next IOFF
+
+            Overflow = True
+            For IA = 1 To NAC
+                LI = LibIndex(IA)
+
+                If AC(LI).libGear = "WFBF" Or AC(LI).libGear = "WFBN" Then ' 4-4 or 4-6 wing-body.
+                    NGearLoads = 2
+                    StrainMax = 0
+                    StrainMax2 = 0
+                    For I = 1 To 8
+                        If System.Math.Abs(StrainResponse(IA, I)) > StrainMax Then
+                            StrainMax = System.Math.Abs(StrainResponse(IA, I)) ' Wing gear interior.
+                        End If
+                        If System.Math.Abs(StrainResponse(IA, I + 8)) > StrainMax2 Then
+                            StrainMax2 = System.Math.Abs(StrainResponse(IA, I + 8)) ' Body gear interior.
+                        End If
+                    Next I
+
+                    'StrainMax = 0.0038801 'TEST
+
+                    'NGridby2 = CInt((AC(LI).libNEVPTS - 16) / 2)
+                    'For I = 17 To NGridby2
+                    '    If System.Math.Abs(StrainResponse(IA, I + NGridby2)) > StrainMax Then
+                    '        StrainMax = System.Math.Abs(StrainResponse(IA, I + NGridby2)) ' Wing gear grid.
+                    '    End If
+                    '    If System.Math.Abs(StrainResponse(IA, I)) > StrainMax2 Then
+                    '        StrainMax2 = System.Math.Abs(StrainResponse(IA, I)) ' Body gear grid.
+                    '    End If
+                    'Next I
+
+                    For I = 37 To 46
+                        If System.Math.Abs(StrainResponse(IA, I)) > StrainMax Then
+                            StrainMax = System.Math.Abs(StrainResponse(IA, I)) ' Wing gear grid.
+                        End If
+                    Next I
+
+                    For I = 17 To 36
+                        If System.Math.Abs(StrainResponse(IA, I)) > StrainMax2 Then
+                            StrainMax2 = System.Math.Abs(StrainResponse(IA, I)) ' Body gear grid.
+                        End If
+                    Next I
+
+
+
+                ElseIf AC(LI).libGear = "X" Then 'added ikawa 2013
+                    AC(LI).libXAC = Nothing
+                    NGearLoads = AC(LI).libNGroups
+                    StrainMax = 0
+                    'NGearLoads = 1
+                    'AC(LI).libNEVPTS1 = 5
+                    For I = 1 To AC(LI).libNEVPTS1
+                        If System.Math.Abs(StrainResponse(IA, I)) > StrainMax Then
+                            StrainMax = System.Math.Abs(StrainResponse(IA, I))
+                        End If
+                    Next I
+
+                    StrainMax2 = 0
+                    For I = AC(LI).libNEVPTS1 + 1 To AC(LI).libNEVPTS
+                        If System.Math.Abs(StrainResponse(IA, I)) > StrainMax2 Then
+                            StrainMax2 = System.Math.Abs(StrainResponse(IA, I))
+                        End If
+                    Next I
+
+
+
+                Else ' Same gear for strain and CDF computation.
+                    NGearLoads = 1
+                    StrainMax = 0
+                    For I = 1 To AC(LI).libNEVPTS
+
+                        If AC(LI).libNEVPTS > CShort(UBound(StrainResponse, 2)) Then
+                            MsgBox("IA=" & IA, MsgBoxStyle.OkOnly, "LI=" & LI)
+                            Exit Sub
+                        ElseIf IA > CShort(UBound(StrainResponse, 1)) Then
+                            MsgBox("+IA=" & IA & " NAC=" & NAC & " B=" & CShort(UBound(StrainResponse, 1)),
+                                   MsgBoxStyle.OkOnly, "LI=" & LI)
+                            Exit Sub
+                        End If
+
+                        If System.Math.Abs(StrainResponse(IA, I)) > StrainMax Then '375 line
+                            StrainMax = System.Math.Abs(StrainResponse(IA, I))
+                        End If
+                    Next I
+                End If
+
+                For IGearLoads = 1 To NGearLoads
+                    If IGearLoads = 2 Then
+                        StrainMax = StrainMax2
+                    End If
+
+                    If Asphalt And DesigningP209DrawStructure = True Then 'ikawa 2012\09\19
+
+                        If StrainMax < 0.000001 Then StrainMax = 0.000001 ' Asphalt
+
+                        gHMA_Strain = CSng(StrainMax)
+                        gRDEC = True
+
+                        If gRDEC Then  'RDEC Model subroutine LeafCDFFlex
+                            Dim PV As Double
+                            'StrainMax = 0.001
+
+                            If gFlexuralMod(ISect) = 0 Then gFlexuralMod(ISect) = 600000
+                            If gAirVoids(ISect) = 0 Then gAirVoids(ISect) = 3.5
+                            If gAsphaltContentByVol(ISect) = 0 Then gAsphaltContentByVol(ISect) = 12
+
+                            gVoidPar(ISect) = gAirVoids(ISect) / (gAirVoids(ISect) + gAsphaltContentByVol(ISect))
+
+                            If gPNMS(ISect) = 0 Then gPNMS(ISect) = 95
+                            If gPPCS(ISect) = 0 Then gPPCS(ISect) = 58
+                            If gP200(ISect) = 0 Then gP200(ISect) = 4.5
+
+                            gGradationPar(ISect) = (gPNMS(ISect) - gPPCS(ISect)) / gP200(ISect)
+
+
+                            PV = 44.422 * (StrainMax ^ 5.14) * ((gFlexuralMod(ISect) * 0.0068948) ^ 2.993) *
+                                 (gVoidPar(ISect) ^ 1.85) * (gGradationPar(ISect) ^ (-0.4063))
+
+                            'NtoFail = 0.4428 * (PV ^ (-1.1102))   'StrainMax = 0.001 gives 33741.474136811965
+                            NtoFail = 0.4801 * (PV ^ (-0.90074)) 'StrainMax = 0.001 gives 4387.4858677915981 
+                        Else
+                            AA = 2.68! - 5.0! * System.Math.Log(StrainMax) / Log10
+                            BB = 2.665 * System.Math.Log(ASPMOD) / Log10
+                            NtoFail = 10.0! ^ (AA - BB)  'StrainMax = 0.001 gives 3570.7151530155552
+                            'Damage = (1.0 / NtoFail)
+                        End If
+
+
+
+
+                    Else ' Subgrade
+                        If Not gTandemFnew Then ' kairat replace tandem
+                            If StrainMax < 0.0001 Then StrainMax = 0.0001 Else Overflow = False
+                            '       Standard subgrade criterion.
+                            If Not CBool(StraightLineModel) Then
+                                AA = 0.000247 + 0.000245 * System.Math.Log(SubMod) / Log10
+                                BB = 0.0658 * SubMod ^ 0.559!
+                                NtoFail = 10000.0! * (AA / StrainMax) ^ BB
+                            Else
+                                '         Straight line subgrade criterion.
+                                '          BB = 6.22439  ' Original
+                                '          AA = 0.005    ' Original
+
+                                SubMod = 15000 ' Use the original model with SG modulus at 15,000 for large departure levels.
+                                AAorig = 0.000247 + 0.000245 * System.Math.Log(SubMod) / Log10
+                                BBorig = 0.0658 * SubMod ^ 0.559!
+                                AAorig = AAorig * 10000 ^ (1 / BBorig) '* 0.93
+                                BB = 8.1
+                                AA = 0.004 '* 0.93
+
+                                StrainBreak = (BB * System.Math.Log(AA) / Log10 - BBorig * System.Math.Log(AAorig) / Log10)
+                                StrainBreak = 10.0# ^ (StrainBreak / (BB - BBorig))
+                                '          Debug.Print "StrainBreak = "; StrainBreak; AAorig; BBorig
+
+                                If StrainMax > StrainBreak Then
+                                    NtoFail = (AA / StrainMax) ^ BB
+                                Else
+                                    NtoFail = (AAorig / StrainMax) ^ BBorig
+                                End If
+
+
+                                If gBleasdaleModel Then 'Bleasdale Model (log10 on cov)
+                                    Dim a11, b11, c11 As Single
+                                    'Bleasdale 1
+                                    a11 = -0.152516199 : b11 = 166.9196 : c11 = 1.755388
+
+                                    'Bleasdale 2
+                                    a11 = -0.163768916705
+                                    b11 = 185.192806802
+                                    c11 = 1.65054449461
+
+                                    'If FF_true_ACN Then
+                                    'Else
+                                    'End If
+
+                                    If StrainMax < 0.001 Then
+                                        StrainMax = 0.001
+                                    End If
+
+
+
+                                    'If StrainMax <= 0.0069 Then
+                                    '    NtoFail = 10 ^ ((a11 + b11 * StrainMax) ^ (-1 / c11))
+                                    'Else
+                                    '    NtoFail = 10
+                                    'End If
+
+                                    'Bleasdale 1
+                                    'If StrainMax <= 0.0017846 Then
+                                    '    NtoFail = 10 ^ ((a11 + b11 * StrainMax) ^ (-1 / c11))
+                                    'Else
+                                    '    NtoFail = (0.00418708 / StrainMax) ^ 8.1
+                                    'End If
+
+                                    'Bleasdale 2
+                                    If StrainMax <= 0.001765093 Then
+                                        NtoFail = 10 ^ ((a11 + b11 * StrainMax) ^ (-1 / c11))
+                                    Else
+                                        NtoFail = (0.00414131183 / StrainMax) ^ 8.1
+                                    End If
+
+
+                                End If 'gBleasdaleModel
+
+
+                                publicNtoFail = CSng(NtoFail)
+                                publicSTRAIN = CSng(StrainMax)
+
+                                'If NGearLoads = 2 Then 'to comment
+                                '    gSTRAIN(IGearLoads) = CSng(StrainMax)
+                                'ElseIf NAC = 2 Then
+                                '    gSTRAIN(IA) = CSng(StrainMax)
+                                'End If
+                            End If  'Not CBool
+                        Else ' begin kairat replace tandem
+                            Damage = 0.0!
+
+                            For IEvaly = 2 To NNodesLong - 1
+                                'Changed by G.Larson and E.Phillips because without this check StrainResponse goes out of bounds.
+                                'Cause may be that StrainResponse is not being properly intialized.
+                                If StrainResponse.GetUpperBound(1) <= IEvaly Then
+                                    Continue For
+                                End If
+                                If StrainResponse(IA, IEvaly) < 0 Then
+
+                                    'FileOpen(9, "SSSS.TXT", OpenMode.Append) 'to commnet 1000
+                                    'PrintLine(9, "     IA=" & IA)
+                                    'PrintLine(9, " IEValy=" & IEvaly)
+                                    'PrintLine(9, "UBound1=" & UBound(StrainResponse, 1))
+                                    'PrintLine(9, "UBound2=" & UBound(StrainResponse, 2))
+                                    'PrintLine(9, "Test1" & UBound(StrainResponse, 2))
+                                    'PrintLine(9, "")
+                                    'FileClose(9)
+
+
+                                    ''MAX strain          525 line
+                                    If StrainResponse(IA, IEvaly - 1) < StrainResponse(IA, IEvaly) And
+                                        StrainResponse(IA, IEvaly) > StrainResponse(IA, IEvaly + 1) Then
+                                        StrainMax = System.Math.Abs(StrainResponse(IA, IEvaly))
+                                        ExtrType = 1
+                                        GoTo FAILURELAW
+                                    End If
+
+                                    'MIN strain
+                                    If StrainResponse(IA, IEvaly - 1) > StrainResponse(IA, IEvaly) And
+                                        StrainResponse(IA, IEvaly) < StrainResponse(IA, IEvaly + 1) Then
+                                        StrainMax = System.Math.Abs(StrainResponse(IA, IEvaly))
+                                        ExtrType = 2
+FAILURELAW:
+                                        'HHHHHHHHHHHHHHH
+                                        'ReDim Preserve gStrain2(NAC)
+
+                                        gStrain2(IA) = StrainMax
+                                        If StrainMax < 0.0001 Then StrainMax = 0.0001 Else Overflow = False
+                                        '       Standard subgrade criterion.
+                                        If Not CBool(StraightLineModel) Then
+                                            AA = 0.000247 + 0.000245 * System.Math.Log(SubMod) / Log10
+                                            BB = 0.0658 * SubMod ^ 0.559!
+                                            NtoFail = 10000.0! * (AA / StrainMax) ^ BB
+                                        Else
+
+                                            SubMod = 15000 ' Use the original model with SG modulus at 15,000 for large departure levels.
+                                            AAorig = 0.000247 + 0.000245 * System.Math.Log(SubMod) / Log10
+                                            BBorig = 0.0658 * SubMod ^ 0.559!
+                                            AAorig = AAorig * 10000 ^ (1 / BBorig) '* 0.93
+                                            BB = 8.1
+                                            AA = 0.004 '* 0.93
+
+                                            StrainBreak = (BB * System.Math.Log(AA) / Log10 - BBorig * System.Math.Log(AAorig) / Log10)
+                                            StrainBreak = 10.0# ^ (StrainBreak / (BB - BBorig))
+                                            '          Debug.Print "StrainBreak = "; StrainBreak; AAorig; BBorig
+
+                                            If StrainMax > StrainBreak Then
+                                                NtoFail = (AA / StrainMax) ^ BB
+                                            Else
+                                                NtoFail = (AAorig / StrainMax) ^ BBorig
+                                            End If
+
+
+                                            If gBleasdaleModel Then 'Bleasdale Model (log10 on cov)
+                                                Dim a11, b11, c11 As Single
+                                                'Bleasdale 1
+                                                a11 = -0.152516199 : b11 = 166.9196 : c11 = 1.755388
+
+                                                'Bleasdale 2
+                                                a11 = -0.163768916705
+                                                b11 = 185.192806802
+                                                c11 = 1.65054449461
+
+
+                                                'If FF_true_ACN Then
+                                                'Else
+                                                'End If
+                                                If StrainMax < 0.001 Then
+                                                    StrainMax = 0.001
+                                                End If
+
+
+
+                                                If StrainMax <= 0.001765093 Then
+                                                    NtoFail = 10 ^ ((a11 + b11 * StrainMax) ^ (-1 / c11))
+                                                Else
+                                                    NtoFail = (0.00414131183 / StrainMax) ^ 8.1
+                                                End If
+                                            End If 'gBleasdaleModel
+                                        End If 'endif Not CBool
+                                        'FFFFFFFFFFFFFFF
+                                        Damage = Damage + (-1) ^ ExtrType * 1.0 / NtoFail
+                                    End If   'StrainResponse(IA, IEvaly - 1)
+                                End If   ' StrainResponse(IA, IEvaly) < 0
+                            Next IEvaly
+
+                            publicNtoFail = (1.0 / Damage)
+                            gNtoFail(IA) = NtoFail
+                            publicSTRAIN = (StrainMax)
+
+                        End If ' end kairat replace tandem
+                    End If
+
+
+                    'gFlex_NtoFail(IA) = CSng(NtoFail) 'PCN method for flexible
+                    'gFlex_NtoFail(IA) = (publicNtoFail) 'PCN method for flexible. Commented by ED: unused
+                    gSTRAIN(IA) = publicSTRAIN
+
+                    ACCDFmax = 0 ' AC means aircraft not asphalt.
+                    If IGearLoads = 1 Then ' Report maximum CDF and CtoP for multiple gear aircraft. GFH 08/10/03.
+                        jobCDFacrftMaxtable(ISect, IA) = 0 ' GFH 08/04/03. Global variables, so must be reset.
+                        jobCtoPtable(ISect, IA) = 0 ' GFH 08/04/03.
+                    End If
+                    OFFSET = 0.0!
+                    For IOFF = 1 To NOFF
+                        'System.Windows.Forms.Application.DoEvents()
+
+                        If Mid(ACName(I), 2, 4) = "747" Then
+                            GearACType = 3
+                        End If
+
+                        GearACType = AC(LI).libIGear
+                        GearLoadType = AC(LI).libGear
+                        If Mid(AC(LI).libACName, 1, 4) = "B747" Then
+                            GearACType = 3
+                        End If
+
+                        If GearLoadType = "WFBF" Then
+                            GearACType = DualTandemMainGear
+                            If IGearLoads = 1 Then GearLoadType = "WF" ' Wing dual-tandem.
+                            If IGearLoads = 2 Then GearLoadType = "BF" ' Body dual-tandem.
+                        End If
+                        If GearLoadType = "WFBN" Then
+                            GearACType = DualTandemMainGear
+                            If IGearLoads = 1 Then GearLoadType = "WF" ' Wing dual-tandem.
+                            If IGearLoads = 2 Then GearLoadType = "BN" ' Body triple-dual-tandem.
+                        End If
+
+
+                        '!!!!!!!!!
+                        'Dim time1, time2 As Single
+                        'FileOpen(18, "9999.txt", OpenMode.Append)
+                        ''PrintLine(18, "1")
+                        'time1 = timeGetTime
+
+
+                        'Call LeafCtoPFlex(IA, GearACType, GearLoadType, OFFSET, CovToPass, Depth)
+                        'Call CoverageToPassFlexible(IA, GearACType, IGearLoads, GearLoadType, OFFSET, CovToPass, Depth)
+
+
+                        If AC(LI).libGear = "X" Then
+                            'CToPFlexGeneral13(ByRef IA As Short, ByVal OFFSET As Single, ByRef CovToPass As Single, ByRef Depth As Double)
+                            Call CoverageToPassFlexGeneral13B(IA, IGearLoads, OFFSET, CovToPass, Depth)
+                            'Call CoverageToPassFlexGeneral13B(IA, IGearLoads, OFFSET, CovToPass, 0)
+                            'If AC(LI).libNTires = 8 Then
+                            '    CovToPass = CovToPass / 2
+                            'End If
+
+                        Else
+                                Call CoverageToPassFlexible(IA, GearACType, IGearLoads, GearLoadType, OFFSET, CovToPass, Depth)
+                        End If
+
+
+                        'to comment CovToPass
+                        'CovToPass = 1 / 1.95 '2D
+                        'CovToPass = 1 / 1.4 '3D
+
+                        If IGearLoads = 1 Then
+                            AA1(IA, IOFF) = CovToPass
+                        ElseIf IGearLoads = 2 Then
+                            AA2(IA, IOFF) = CovToPass
+                        End If
+
+
+
+                        'time2 = timeGetTime
+
+                        'IA, GearACType,             GearLoadType, OFFSET, CovToPass, Depth
+                        'IA, GearACType, IGearLoads, GearLoadType, OFFSET, CovToPass, Depth
+
+                        'FileOpen(18, "ZZZZZ.txt", OpenMode.Append)
+                        'PrintLine(18, IA & " " & GearACType & " " & IGearLoads & " " & GearLoadType & " " & OFFSET & " " & CovToPass & " " & Depth)
+                        'FileClose(18)
+
+                        'PrintLine(18, (time2 - time1))
+                        'FileClose(18)
+
+                        If gTandemFnew Then ' kairat replace tandem
+                            ACCDF = CSng(Reps(IA) * CovToPass * Damage) ' Aircraft CDF -kairat
+                        Else
+                            ACCDF = CSng(Reps(IA) * CovToPass / NtoFail) ' Aircraft CDF.
+                        End If
+
+                        If ACCDF > ACCDFmax Then ACCDFmax = ACCDF
+
+                        If IGearLoads = 1 Then ' GFH 08/10/03.
+                            lclCDF(IA, IOFF) = ACCDF ' JIA 08/04/03.
+                            CtoP(IA, IOFF) = CovToPass ' GFH 08/10/03.
+                        Else
+                            '         Sum CDF over gears for multiple gear aircraft.
+                            lclCDF(IA, IOFF) = lclCDF(IA, IOFF) + ACCDF ' GFH 08/10/03.
+                            '         Report maximum CtoP for multiple gear aircraft.
+                            If CovToPass > CtoP(IA, IOFF) Then CtoP(IA, IOFF) = CovToPass ' GFH 08/10/03.
+                        End If
+                        If lclCDF(IA, IOFF) > jobCDFacrftMaxtable(ISect, IA) Then jobCDFacrftMaxtable(ISect, IA) = lclCDF(IA, IOFF) ' GFH 08/10/03.
+                        If jobCtoPtable(ISect, IA) < CtoP(IA, IOFF) Then jobCtoPtable(ISect, IA) = CtoP(IA, IOFF) ' GFH 08/10/03.
+                        '       Note: CtoP(IA, IOFF) is used only for printing when required.
+
+                        CDFFlexVal(IOFF) = CDFFlexVal(IOFF) + ACCDF
+
+                        'FileOpen(18, "zzcdfflexval.txt", OpenMode.Append)
+                        'PrintLine(18, IOFF & " " & OFFSET & " " & CDFFlexVal(IOFF) & " " & CovToPass & " " & Damage)
+                        'FileClose(18)
+
+                        OFFSET = OFFSET + OFFSETINC
+
+                    Next IOFF
+                    '      Debug.Print "LeafCDFFlex"; IA; IGearLoads; StrainMax; ACCDFmax
+                    'Exit Try ' option for MATLAB
+                    'End ' option for MATLAB
+                Next IGearLoads
+
+
+            Next IA
+
+
+
+
+            CDFMAX = 0.0!
+            For IOFF = 1 To NOFF
+                If CDFMAX < CDFFlexVal(IOFF) Then
+                    CDFMAX = CDFFlexVal(IOFF)
+                    IControl = IOFF ' JIA 08/04/03.
+                End If
+            Next IOFF
+
+            'cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf
+            For IA = 1 To NAC
+                For IOFF = 1 To NOFF
+                    CDFdata(1, IA, IOFF) = 0
+                    CDFdata(1, NAC + 1, IOFF) = 0
+                Next IOFF
+            Next IA
+
+
+            For IA = 1 To NAC
+                For IOFF = 1 To NOFF
+                    jobCDFtable(ISect, IA) = lclCDF(IA, IOFF)
+                    CDFdata(1, IA, IOFF) = CSng(lclCDF(IA, IOFF))
+                    CDFdata(1, NAC + 1, IOFF) = CDFdata(1, NAC + 1, IOFF) + CSng(lclCDF(IA, IOFF))
+                Next IOFF
+            Next IA
+            'cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf cdf
+
+
+            ' > Jia 08/04/03
+            For IA = 1 To NAC
+                jobCDFtable(ISect, IA) = lclCDF(IA, IControl)
+            Next IA
+            ' Jia 08/04/03 <
+
+            '  For IOFF = 1 To NOFF
+            '    OFFSET = (IOFF - 1) * 10!
+            '    Debug.Print LPad$(6, Format(OFFSET, "0.0"));
+            '    Debug.Print LPad$(8, Format(CtoP(1, IOFF) * 100!, "0.000"));
+            '    Debug.Print LPad$(8, Format(CtoP(2, IOFF) * 100!, "0.000"));
+            '    Debug.Print LPad$(8, Format(CtoP(3, IOFF) * 100!, "0.000"));
+            '    Debug.Print LPad$(8, Format(CtoP(4, IOFF) * 100!, "0.000"));
+            '    Debug.Print LPad$(8, Format(CDFFlexVal(IOFF), "0.00000"))
+            '  Next IOFF
+            '  Debug.Print "Max CDF     = "; LPad$(8, Format(CDFMAX, "0.00000"))
+
+            If DesigningStr And FileErr Then
+                DesigningStr = False
+                S = "There has been an error reading" & NL
+                S = S & "strains from the data file. This" & NL
+                S = S & "may have been caused by a very" & NL
+                S = S & "thin surface layer. The design" & NL
+                S = S & "will be ended." & NL2
+                S = S & "Please check the structure."
+                Ret = MsgBoxDQ(S, 0, "File Error")
+            End If
+
+        Catch ex As Exception
+
+            Dim txt As String
+            txt = ex.Message
+            txt = txt + Environment.NewLine + Environment.NewLine
+            txt = txt + ex.StackTrace
+            txt = txt + Environment.NewLine + Environment.NewLine
+            MsgBox(txt)
+
+        End Try
+
+
+    End Sub
