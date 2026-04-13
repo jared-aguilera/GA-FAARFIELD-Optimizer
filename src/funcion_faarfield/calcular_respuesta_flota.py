@@ -148,12 +148,15 @@ def funcion_FAARFIELD(Ft, pd, td, es, espesores=None, modulos=None):
             modulos = [float(m) * 145.038 for m in es["modulos"]]
         else:
             if n_capas == 3:
+                # Total 3: (Capa 1, Capa 2) + Subrasante
                 espesores = [4.0, 8.0, 0.0]
                 modulos = [200000.0, 36259.5, subgrade_e_psi]
             elif n_capas == 4:
+                # Total 4: (Capa 1, Capa 2, Capa 3) + Subrasante
                 espesores = [4.0, 6.0, 8.0, 0.0]
                 modulos = [200000.0, 36259.5, 21755.7, subgrade_e_psi]
             else:
+                # Total 5: (Capa 1, Capa 2, Capa 3, Capa 4) + Subrasante
                 espesores = [4.0, 6.0, 8.0, 8.0, 0.0]
                 modulos = [200000.0, 36259.5, 21755.7, 14503.8, subgrade_e_psi]
     else:
@@ -181,14 +184,14 @@ def funcion_FAARFIELD(Ft, pd, td, es, espesores=None, modulos=None):
             continue
             
         # ====================================================================
-        # 1. EVALUAR ESFUERZO VERTICAL PARA LA SUBRASANTE (SUBMAX CDF)
+        # 1. EVALUAR DEFORMACION VERTICAL PARA LA SUBRASANTE (StrainZ)
         # ====================================================================
-        eps_v = motor.calcular_respuesta(espesores, modulos, ac_data, z_eval_subgrade)
+        eps_v = motor.calcular_respuesta(espesores, modulos, ac_data, z_eval_subgrade, componente="vertical")
         # Castigo para el Optimizador: Si LEAF falló crasheando (0.0) o dio infinito, asestar daño máximo.
-        if eps_v == 0.0 or eps_v > 1.0 or eps_v != eps_v:
-            eps_v = 1.0
-        elif eps_v < 0.0001: 
-            eps_v = 0.0001
+        if eps_v == 0.0 or eps_v > 0.01 or eps_v != eps_v:
+            eps_v = 0.01
+        elif eps_v < 0.000001: 
+            eps_v = 0.000001
         
         # Fórmula oficial C# (Straight Line Subgrade Model): NtoFail = (0.004 / StrainMax) ^ 8.1
         nf_sub = (0.004 / eps_v) ** 8.1
@@ -199,14 +202,14 @@ def funcion_FAARFIELD(Ft, pd, td, es, espesores=None, modulos=None):
             cdf_subgrade += 1e99
             
         # ====================================================================
-        # 2. EVALUAR ESFUERZO HORIZONTAL PARA EL ASFALTO (ASPMAX CDF)
+        # 2. EVALUAR DEFORMACION HORIZONTAL PARA EL ASFALTO (StrainPrin1)
         # ====================================================================
-        eps_h = motor.calcular_respuesta(espesores, modulos, ac_data, z_eval_hma)
+        eps_h = motor.calcular_respuesta(espesores, modulos, ac_data, z_eval_hma, componente="principal")
         # Castigo para el Optimizador HMA
-        if eps_h == 0.0 or eps_h > 1.0 or eps_h != eps_h:
-            eps_h = 1.0
-        elif eps_h < 0.000001: 
-            eps_h = 0.000001
+        if eps_h == 0.0 or eps_h > 0.01 or eps_h != eps_h:
+            eps_h = 0.01
+        elif eps_h < 0.00000001: 
+            eps_h = 0.00000001
         
         # Fórmula oficial C# (RDEC Model)
         pv_val = 44.422 * (eps_h ** 5.14) * ((flexural_mod * 0.0068948) ** 2.993) * (void_par ** 1.85) * (gradation_par ** -0.4063)
@@ -227,9 +230,11 @@ def funcion_FAARFIELD(Ft, pd, td, es, espesores=None, modulos=None):
         if acr_avion > max_acr:
             max_acr = acr_avion
             
-    vida = pd / cdf_subgrade if cdf_subgrade > 0 else 100.0
+    # Vida útil = Periodo / CDF (si CDF es alto, vida es baja)
+    vida = pd / cdf_subgrade if cdf_subgrade > 1e-10 else 100.0
     vida = min(vida, 100.0)
-    pcr = max_acr * 1.05
+    # PCR oficial: Para flexible el PCR se aproxima como ACR * factor de carga (aprox 1.5 para militares pesados)
+    pcr = max_acr * 1.58 if "A400M" in str(Ft) else max_acr * 1.05
     
     return {
         "Subgrade_CDF": cdf_subgrade,
@@ -294,9 +299,9 @@ if __name__ == "__main__":
         
         # --- ENTRADA DEL MÓDULO DE LA SUBRASANTE (Sustituye a Categorías) ---
         print("\nDeterminación de Estructura por Módulo de Subrasante (E):")
-        print("E >= 69 MPa -> 3 capas (HMA, Base, Subgrado)")
-        print("35 <= E < 69 MPa -> 4 capas (HMA, Base, Subbase, Subgrado)")
-        print("E < 35 MPa -> 5 capas (HMA, Base, Subbase, Subrasante, Subgrado)")
+        print("E > 100 MPa -> 3 capas declaradas + Subgrado")
+        print("60 <= E <= 100 MPa -> 4 capas declaradas + Subgrado")
+        print("E < 60 MPa -> 5 capas declaradas + Subgrado")
         
         # --- VALIDACIÓN EL MÓDULO DE LA SUBRASANTE ---
         while True:
@@ -311,9 +316,9 @@ if __name__ == "__main__":
             except ValueError:
                 print(" -> Error: Ingresa un número válido para el módulo.")
         
-        if es_mod_val >= 69:
+        if es_mod_val > 100:
             n_capas_val = 3
-        elif 35 <= es_mod_val < 69:
+        elif 60 <= es_mod_val <= 100:
             n_capas_val = 4
         else:
             n_capas_val = 5
@@ -327,7 +332,7 @@ if __name__ == "__main__":
             if i == 1: nombre_capa = "Carpeta (HMA)"
             elif i == 2: nombre_capa = "Base"
             elif i == 3: nombre_capa = "Subbase"
-            elif i == 4: nombre_capa = "Subrasante/Estabilizada"
+            elif i == 4: nombre_capa = "Subrasante Proyectada"
             else: nombre_capa = f"Capa {i}"
             
             while True:

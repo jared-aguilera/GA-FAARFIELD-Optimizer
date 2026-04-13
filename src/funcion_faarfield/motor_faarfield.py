@@ -52,7 +52,7 @@ class MotorFAARFIELD:
             return None
         return None
 
-    def calcular_respuesta(self, espesores, modulos, ac_data, z_eval):
+    def calcular_respuesta(self, espesores, modulos, ac_data, z_eval, componente=6):
         """
         Ejecuta el análisis de respuesta estructural en el motor LEAF.
         
@@ -61,9 +61,10 @@ class MotorFAARFIELD:
             modulos (list): Lista de módulos elásticos por capa.
             ac_data (dict): Diccionario con datos de la aeronave.
             z_eval (float): Profundidad de evaluación.
+            componente (int): Índice de la matriz de respuesta (6=Vertical Strain, 4=Horizontal Strain).
             
         Returns:
-            float: Deformación vertical calculada.
+            float: Valor de respuesta calculado.
         """
         try:
             # Configuración de estructura
@@ -110,6 +111,7 @@ class MotorFAARFIELD:
                 Array.CreateInstance(Double, 10, 10), 
                 Array.CreateInstance(clsLEAF.LEAFAllResponses, 10, 10)
             )
-            return abs(res[4][1, 1])
+            # res[4] es la matriz Response[Componente, Punto]
+            return abs(res[4][componente, 1])
         except Exception:
             return 0.0
