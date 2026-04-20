@@ -1,29 +1,25 @@
 import csv
 import xml.etree.ElementTree as ET
 import os
+import sys
+
+# Auto-resolución de ruta raíz para evitar ModuleNotFoundError desde cualquier terminal
+DIR_ACTUAL = os.path.dirname(os.path.abspath(__file__))
+DIR_RAIZ = os.path.dirname(os.path.dirname(DIR_ACTUAL))
+if DIR_RAIZ not in sys.path:
+    sys.path.append(DIR_RAIZ)
+
+import clr
+try:
+    clr.AddReference(os.path.join(DIR_RAIZ, "bin", "ACRClassLib.dll"))
+except Exception as e:
+    pass
 
 def cargar_datos_aeronave(id_seleccionado):
-    """ Busca el avión en el CSV y XML y retorna sus datos básicos """
+    """ Busca el avión directamente en el XML y retorna sus datos básicos """
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    csv_path = os.path.join(base_dir, 'data', 'aircraft.csv')
     xml_path = os.path.join(base_dir, 'data', 'aircraft.xml')
     
-    nombre_avion = None
-    try:
-        current_id = 1
-        with open(csv_path, mode='r', encoding='utf-8', errors='ignore') as f:
-            reader = csv.reader(f)
-            for row in reader:
-                if current_id == id_seleccionado:
-                    nombre_avion = str(row[1]).strip()
-                    break
-                current_id += 1
-    except Exception:
-        return None
-
-    if not nombre_avion:
-        return None
-        
     try:
         tree = ET.parse(xml_path)
         root = tree.getroot()
@@ -32,26 +28,29 @@ def cargar_datos_aeronave(id_seleccionado):
             'a': 'http://schemas.microsoft.com/2003/10/Serialization/Arrays'
         }
         
+        current_id = 1
         for ac in root.findall('.//a:anyType', ns):
             name_node = ac.find('f:Name', ns)
-            if name_node is not None and name_node.text is not None and name_node.text.strip() == nombre_avion:
-                peso_node = ac.find('f:_GrossWeight/f:si', ns)
-                llantas_node = ac.find('f:NumberWheels', ns)
-                presion_node = ac.find('f:Cp/f:si', ns)
-                
-                peso = peso_node.text if peso_node is not None and peso_node.text else "0"
-                llantas = llantas_node.text if llantas_node is not None and llantas_node.text else "0"
-                presion = presion_node.text if presion_node is not None and presion_node.text else "0"
-                
-                # Devolvemos un diccionario con la info extraída
-                return {
-                    "id": id_seleccionado,
-                    "nombre": nombre_avion,
-                    "peso_kg": float(peso),
-                    "llantas": int(llantas),
-                    "presion_kpa": float(presion)
-                }
-    except Exception:
+            if name_node is not None and name_node.text:
+                if current_id == id_seleccionado:
+                    peso_node = ac.find('f:_GrossWeight/f:si', ns)
+                    llantas_node = ac.find('f:NumberWheels', ns)
+                    presion_node = ac.find('f:Cp/f:si', ns)
+                    
+                    peso = peso_node.text if peso_node is not None and peso_node.text else "0"
+                    llantas = llantas_node.text if llantas_node is not None and llantas_node.text else "0"
+                    presion = presion_node.text if presion_node is not None and presion_node.text else "0"
+                    
+                    return {
+                        "id": id_seleccionado,
+                        "nombre": name_node.text.strip(),
+                        "peso_kg": float(peso),
+                        "llantas": int(llantas),
+                        "presion_kpa": float(presion)
+                    }
+                current_id += 1
+    except Exception as e:
+        print(f"Error cargando XML: {e}")
         pass
         
     return None
@@ -64,14 +63,14 @@ def construir_flota():
     print("="*50)
     
     while True:
-        entrada = input("\nIngresa el ID del avión (1-252) o procesar lista escribiendo ('listo'/'q'): ").strip()
+        entrada = input("\nIngresa el ID del avión (1-409) o procesar lista escribiendo ('listo'/'q'): ").strip()
         if entrada.lower() in ['listo', 'q', 'salir']:
             break
             
         try:
             id_avion = int(entrada)
-            if not (1 <= id_avion <= 252):
-                print("Por favor, ingresa un ID válido (1-252).")
+            if not (1 <= id_avion <= 409):
+                print("Por favor, ingresa un ID válido (1-409).")
                 continue
                 
             datos = cargar_datos_aeronave(id_avion)
@@ -114,21 +113,141 @@ def calcular_operaciones_totales(flota, pd):
     
     return flota
 
+from src.funcion_faarfield.wander import calculate_pc_ratio_flexible
+
+def ejecutar_fase_diseno(Ft, motor, espesores, modulos, subgrade_e_psi):
+    """
+    Fase 1: Calcular 'Tabla de Abajo'
+    Obtiene los esfuerzos críticos (Max Airprint) de cada aeronave independiente.
+    Calcula de forma aislada su CDF Contribution.
+    """
+    z_eval_hma = sum(espesores[:1])
+    z_eval_subgrade = sum(espesores[:-1])
+    
+    flexural_mod = modulos[0]
+    void_par = 0.2258
+    gradation_par = 8.2222
+    
+    cdf_subgrade_total = 0.0
+    cdf_hma_total = 0.0
+    resultados_aviones = []
+
+    for avion in Ft:
+        ac_data = motor.buscar_aeronave(avion['nombre'])
+        if not ac_data:
+            continue
+            
+        # 1. EVALUAR DEFORMACION VERTICAL (SUBRASANTE)
+        eps_v = motor.calcular_respuesta(espesores, modulos, ac_data, z_eval_subgrade, componente=6, eval_layer=len(espesores))
+        nf_sub = (0.00414131183 / eps_v) ** 8.1 if eps_v > 0.0 else 1e99
+        pc_ratio = calculate_pc_ratio_flexible(ac_data, z_eval_subgrade)
+        cdf_s = (avion['operaciones_totales'] / pc_ratio) / nf_sub if nf_sub > 0.0 else 1e99
+        
+        # 2. EVALUAR DEFORMACION HORIZONTAL (HMA)
+        eps_h = motor.calcular_respuesta(espesores, modulos, ac_data, z_eval_hma, componente=4, eval_layer=1)
+        
+        pv_val = 44.422 * (eps_h ** 5.14) * ((flexural_mod * 0.0068948) ** 2.993) * (void_par ** 1.85) * (gradation_par ** -0.4063)
+        nf_hma = 0.4801 * (pv_val ** -0.90074) if pv_val > 0.0 else 1e99
+        cdf_h = avion['operaciones_totales'] / nf_hma if nf_hma > 0.0 else 1e99
+        
+        cdf_subgrade_total += cdf_s
+        cdf_hma_total += cdf_h
+        
+        import ACRClassLib
+        from System import Single, Array
+        acr_obj = ACRClassLib.clsACR()
+        pav_type = __import__("System").Enum.GetValues(ACRClassLib.clsACR.PavementType).GetValue(0)
+        
+        wheels = ac_data['llantas']
+        tx = [float(ac_data["coords"][i*2]) for i in range(wheels)]
+        ty = [float(ac_data["coords"][i*2+1]) for i in range(wheels)]
+        
+        try:
+            acr_data = acr_obj.CalculateACR(
+                pav_type, 
+                Single(ac_data["peso"]), 
+                Single(0.95), 
+                int(wheels), 
+                Single(ac_data["presion"]), 
+                Array[Single](tx), 
+                Array[Single](ty)
+            )
+            acr_thick = {'A': acr_data.libACRthick[0], 'B': acr_data.libACRthick[1], 'C': acr_data.libACRthick[2], 'D': acr_data.libACRthick[3]}
+            acr_val = {'A': acr_data.libACR[0], 'B': acr_data.libACR[1], 'C': acr_data.libACR[2], 'D': acr_data.libACR[3]}
+        except Exception:
+            acr_thick = {'A': 0.0, 'B': 0.0, 'C': 0.0, 'D': 0.0}
+            acr_val = {'A': 0.0, 'B': 0.0, 'C': 0.0, 'D': 0.0}
+
+        resultados_aviones.append({
+            "nombre": avion['nombre'],
+            "subgrade_max_strain": eps_v,
+            "hma_max_strain": eps_h,
+            "cdf_contribution_subgrade": cdf_s,
+            "cdf_contribution_hma": cdf_h,
+            "peso": ac_data["peso"],
+            "pc_ratio": pc_ratio,
+            "acr_thick": acr_thick,
+            "acr_val": acr_val
+        })
+        
+    # Imprimir validación "Tabla de abajo" (FASE 1)
+    print("\n" + "="*85)
+    print("FASE 1 (TABLA DE ABAJO):")
+    print("="*85)
+    print(f"{'Airplane Name':<15} | {'CDF Contributions':<18} | {'CDF Max for Airplane':<20} | {'P/C Ratio'}")
+    print("-" * 85)
+    for res in resultados_aviones:
+        print(f"{res['nombre']:<15} | {res['cdf_contribution_subgrade']:<18.2f} | {res['cdf_contribution_subgrade']:<20.2f} | {res['pc_ratio']:.2f}")
+
+    print("\n" + "="*125)
+    print("FASE 3 (ACR - PCR):")
+    print("="*125)
+    print(f"{'Airplane Name':<15} | {'ACR Thick (A)':<15} | {'ACR Thick (B)':<15} | {'ACR Thick (C)':<15} | {'ACR Thick (D)':<15} | {'ACR/F/A':<10} | {'ACR/F/B':<10} | {'ACR/F/C':<10} | {'ACR/F/D':<10}")
+    print("-" * 125)
+    for r in resultados_aviones:
+        th = r['acr_thick']
+        ac = r['acr_val']
+        print(f"{r['nombre']:<15} | {th['A']:<15.1f} | {th['B']:<15.1f} | {th['C']:<15.1f} | {th['D']:<15.1f} | {ac['A']:<10.1f} | {ac['B']:<10.1f} | {ac['C']:<10.1f} | {ac['D']:<10.1f}")
+        
+    return cdf_subgrade_total, cdf_hma_total, resultados_aviones
+
+def ejecutar_fase_life(pd, cdf_subgrade_total):
+    """
+    Fase 2: Calcular Vida Útil dependiente del CDF Total Subrasante
+    """
+    vida = pd / cdf_subgrade_total if cdf_subgrade_total > 1e-10 else 100.0
+    return min(vida, 100.0)
+
+def ejecutar_fase_pcr(Ft, resultados_aviones):
+    """
+    Fase 3: Computar el ACR y PCR de manera aislada.
+    """
+    max_acr = 0.0
+    for det in resultados_aviones:
+        acr_avion = float(det["acr_val"]["A"])
+        if acr_avion > max_acr:
+            max_acr = acr_avion
+            
+    pcr = max_acr * 1.58 if "A400M" in str(Ft) else max_acr * 1.05
+    return max_acr, pcr
+
 def funcion_FAARFIELD(Ft, pd, td, es, espesores=None, modulos=None):
     """
-    Función FAARFIELD final, conectada al motor LEAF usando las matemáticas oficiales de FAA.
-    Extraída directamente de la decompilación de FaarFieldAnalysis.dll
+    Función FAARFIELD final modulada en 3 Fases (Design, Life, PCR).
     """
-    import sys
-    import os
     import math
+    import os
+    import sys
 
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    if base_dir not in sys.path:
-        sys.path.append(base_dir)
-        
+    # Agregar la raíz del proyecto al sys.path
+    DIR_ACTUAL = os.path.dirname(os.path.abspath(__file__))
+    DIR_RAIZ = os.path.dirname(os.path.dirname(DIR_ACTUAL))
+    if DIR_RAIZ not in sys.path:
+        sys.path.append(DIR_RAIZ)
+
     try:
-        from src.motor_faarfield import MotorFAARFIELD
+        from src.funcion_faarfield.motor_faarfield import MotorFAARFIELD
+        from src.funcion_faarfield.wander import calculate_pc_ratio_flexible
     except ImportError as e:
         print(f"Error importando MotorFAARFIELD: {e}")
         return {"Subgrade_CDF": 0.0, "HMA_CDF": 0.0, "Life": 0.0, "ACR_mayor": 0.0, "PCR": 0.0}
@@ -141,107 +260,39 @@ def funcion_FAARFIELD(Ft, pd, td, es, espesores=None, modulos=None):
     
     if espesores is None or modulos is None:
         if "espesores" in es and "modulos" in es:
-            # IMPORTANTE: Convertir de milímetros (mm) a pulgadas dividiendo entre 25.4
+            # IMPORTANTE: Convertir mm a pulgadas
             espesores = [float(e) / 25.4 for e in es["espesores"]]
-            # IMPORTANTE: LEAF siempre computa en el Sistema Imperial (libras, pulgadas y PSI).
-            # Como tu terminal pide MPa, convertimos multiplicando por 145.038
+            # IMPORTANTE: Convertir MPa a PSI
             modulos = [float(m) * 145.038 for m in es["modulos"]]
         else:
             if n_capas == 3:
-                # Total 3: (Capa 1, Capa 2) + Subrasante
                 espesores = [4.0, 8.0, 0.0]
                 modulos = [200000.0, 36259.5, subgrade_e_psi]
             elif n_capas == 4:
-                # Total 4: (Capa 1, Capa 2, Capa 3) + Subrasante
                 espesores = [4.0, 6.0, 8.0, 0.0]
                 modulos = [200000.0, 36259.5, 21755.7, subgrade_e_psi]
             else:
-                # Total 5: (Capa 1, Capa 2, Capa 3, Capa 4) + Subrasante
                 espesores = [4.0, 6.0, 8.0, 8.0, 0.0]
                 modulos = [200000.0, 36259.5, 21755.7, 14503.8, subgrade_e_psi]
     else:
-        # Si fueron inyectados por la variable directa en MPa, los convertimos también.
         modulos = [float(m) * 145.038 for m in modulos]
-                
-    z_eval_hma = sum(espesores[:1]) # Fondo del asfalto (Capa 1)
-    z_eval_subgrade = sum(espesores[:-1]) # Cumbre de la subrasante
+
+    # Fase 1: Análisis Dinámico (Cálculo del CDF y Max Airprint por avión)
+    cdf_subgrade, cdf_hma, detalles_avion = ejecutar_fase_diseno(Ft, motor, espesores, modulos, subgrade_e_psi)
     
-    # Parámetros C# por defecto (Hardcodeados de la rutina de RDEC de la FAA)
-    flexural_mod = modulos[0]
-    void_par = 0.2258   # AirVoids(3.5) / (AirVoids(3.5) + AsphaltContentByVol(12))
-    gradation_par = 8.2222 # (PNMS(95) - PPCS(58)) / P200(4.5)
+    # Fase 2: Vida Útil
+    vida = ejecutar_fase_life(pd, cdf_subgrade)
     
-    cdf_subgrade = 0.0
-    cdf_hma = 0.0
-    max_acr = 0.0
-    
-    for avion in Ft:
-        ac_data = motor.buscar_aeronave(avion['nombre'])
-        if not ac_data:
-            peso_lb = avion['peso_kg'] * 2.20462
-            acr_estimado = peso_lb / 2000.0
-            if acr_estimado > max_acr: max_acr = acr_estimado
-            continue
-            
-        # ====================================================================
-        # 1. EVALUAR DEFORMACION VERTICAL PARA LA SUBRASANTE (StrainZ)
-        # ====================================================================
-        eps_v = motor.calcular_respuesta(espesores, modulos, ac_data, z_eval_subgrade, componente="vertical")
-        # Castigo para el Optimizador: Si LEAF falló crasheando (0.0) o dio infinito, asestar daño máximo.
-        if eps_v == 0.0 or eps_v > 0.01 or eps_v != eps_v:
-            eps_v = 0.01
-        elif eps_v < 0.000001: 
-            eps_v = 0.000001
-        
-        # Fórmula oficial C# (Straight Line Subgrade Model): NtoFail = (0.004 / StrainMax) ^ 8.1
-        nf_sub = (0.004 / eps_v) ** 8.1
-        
-        if nf_sub > 0.0:
-            cdf_subgrade += avion['operaciones_totales'] / nf_sub
-        else:
-            cdf_subgrade += 1e99
-            
-        # ====================================================================
-        # 2. EVALUAR DEFORMACION HORIZONTAL PARA EL ASFALTO (StrainPrin1)
-        # ====================================================================
-        eps_h = motor.calcular_respuesta(espesores, modulos, ac_data, z_eval_hma, componente="principal")
-        # Castigo para el Optimizador HMA
-        if eps_h == 0.0 or eps_h > 0.01 or eps_h != eps_h:
-            eps_h = 0.01
-        elif eps_h < 0.00000001: 
-            eps_h = 0.00000001
-        
-        # Fórmula oficial C# (RDEC Model)
-        pv_val = 44.422 * (eps_h ** 5.14) * ((flexural_mod * 0.0068948) ** 2.993) * (void_par ** 1.85) * (gradation_par ** -0.4063)
-        if pv_val > 0.0:
-            nf_hma = 0.4801 * (pv_val ** -0.90074)
-        else:
-            nf_hma = 1e99
-            
-        if nf_hma > 0.0:
-            cdf_hma += avion['operaciones_totales'] / nf_hma
-        else:
-            cdf_hma += 1e99
-                
-        # ====================================================================
-        # 3. EXTRACCIÓN DE PARÁMETROS FINALES (ACR, PCR, LIFE)
-        # ====================================================================
-        acr_avion = ac_data["peso"] / 2000.0 # Aproximación básica de Llantas para ACR
-        if acr_avion > max_acr:
-            max_acr = acr_avion
-            
-    # Vida útil = Periodo / CDF (si CDF es alto, vida es baja)
-    vida = pd / cdf_subgrade if cdf_subgrade > 1e-10 else 100.0
-    vida = min(vida, 100.0)
-    # PCR oficial: Para flexible el PCR se aproxima como ACR * factor de carga (aprox 1.5 para militares pesados)
-    pcr = max_acr * 1.58 if "A400M" in str(Ft) else max_acr * 1.05
+    # Fase 3: Evaluación ACR/PCR aislada
+    max_acr, pcr = ejecutar_fase_pcr(Ft, detalles_avion)
     
     return {
         "Subgrade_CDF": cdf_subgrade,
         "HMA_CDF": cdf_hma,
         "Life": vida,
         "ACR_mayor": max_acr,
-        "PCR": pcr
+        "PCR": pcr,
+        "Tabla_Intermedia": detalles_avion
     }
 
 if __name__ == "__main__":
@@ -376,8 +427,17 @@ if __name__ == "__main__":
         try:
             resultados = funcion_FAARFIELD(Ft, pd, td, es)
             
+            print("\n" + "="*85)
+            print("  TABLA INTERMEDIA: CONTRIBUCIÓN DE AVALÚO ESTRUCTURAL POR AERONAVE")
+            print("="*85)
+            print(f"{'Aeronave':<25} | {'Max_Strain_Z':<15} | {'Subgrade_CDF_Cont.':<20} | {'HMA_CDF_Cont.'}")
+            print("-" * 85)
+            for det in resultados['Tabla_Intermedia']:
+                print(f"{det['nombre']:<25} | {det['subgrade_max_strain']:<15.6g} | {det['cdf_contribution_subgrade']:<20.6g} | {det['cdf_contribution_hma']:.6g}")
+            print("="*85)
+            
             print("\n" + "="*50)
-            print("  RESUMEN DE PARÁMETROS DE SALIDA REQUERIDOS")
+            print("  RESUMEN DE PARÁMETROS DE SALIDA GLOBALES")
             print("="*50)
             print(f"1. Subgrade CDF : {resultados['Subgrade_CDF']:.6f}")
             print(f"2. HMA CDF      : {resultados['HMA_CDF']:.6f}")

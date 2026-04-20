@@ -1,6 +1,7 @@
 import os
 import clr
-import csv
+import xml.etree.ElementTree as ET
+import clr
 import System
 from System import Double, Array
 
@@ -9,7 +10,7 @@ print("\n[DEBUG] Cargando MotorFAARFIELD desde: " + os.path.abspath(__file__))
 DIR_SRC = os.path.dirname(os.path.abspath(__file__))
 DIR_RAIZ = os.path.dirname(DIR_SRC)
 DIR_BIN = os.path.join(DIR_RAIZ, "bin")
-PATH_AIRCRAFT = os.path.join(DIR_RAIZ, "data", "aircraft.csv")
+PATH_AIRCRAFT_XML = os.path.join(DIR_RAIZ, "data", "aircraft.xml")
 
 # Carga de biblioteca técnica FAARFIELD
 clr.AddReference(os.path.join(DIR_BIN, "LEAFClassLib.dll"))
@@ -28,9 +29,30 @@ class MotorFAARFIELD:
         # Opción 4: AllResponses es necesaria para obtener StrainZ y StrainPrin1 simultáneamente
         self.options = clsLEAF.LEAFoptions.AllResponses
 
+    def obtener_catalogo_aeronaves(self):
+        """ Retorna la lista completa de aviones disponibles en la base de datos XML. """
+        catalogo = []
+        try:
+            tree = ET.parse(PATH_AIRCRAFT_XML)
+            root = tree.getroot()
+            ns = {
+                'f': 'http://schemas.datacontract.org/2004/07/FaarFieldModel',
+                'a': 'http://schemas.microsoft.com/2003/10/Serialization/Arrays'
+            }
+            idx = 1
+            for ac in root.findall('.//a:anyType', ns):
+                name_node = ac.find('f:Name', ns)
+                if name_node is not None and name_node.text:
+                    catalogo.append({"id": idx, "nombre": name_node.text.strip()})
+                    idx += 1
+            return catalogo
+        except Exception as e:
+            print(f"Error cargando catálogo XML: {e}")
+            return catalogo
+
     def buscar_aeronave(self, nombre):
         """
-        Extrae parámetros físicos de una aeronave desde el archivo CSV.
+        Extrae parámetros físicos de una aeronave desde el archivo XML nativo.
         
         Args:
             nombre (str): Nombre o identificador de la aeronave.
@@ -39,18 +61,44 @@ class MotorFAARFIELD:
             dict: Datos técnicos (peso, presión, llantas, coordenadas) o None.
         """
         try:
-            with open(PATH_AIRCRAFT, mode='r', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if len(row) > 11 and nombre.upper() in row[1].upper():
-                        n_tires = int(row[11])
-                        return {
-                            "peso": float(row[2]),
-                            "presion": float(row[4]),
-                            "llantas": n_tires,
-                            "coords": [float(x) for x in row[12:12+(n_tires*2)]]
-                        }
-        except Exception:
+            tree = ET.parse(PATH_AIRCRAFT_XML)
+            root = tree.getroot()
+            ns = {
+                'f': 'http://schemas.datacontract.org/2004/07/FaarFieldModel',
+                'a': 'http://schemas.microsoft.com/2003/10/Serialization/Arrays'
+            }
+            
+            for ac in root.findall('.//a:anyType', ns):
+                name_node = ac.find('f:Name', ns)
+                if name_node is not None and name_node.text and nombre.upper() in name_node.text.upper():
+                    peso_node = ac.find('f:_GrossWeight/f:us', ns)
+                    presion_node = ac.find('f:Cp/f:us', ns)
+                    llantas_node = ac.find('f:NumberWheels', ns)
+                    coords_node = ac.find('f:WheelCoordinates', ns)
+                    
+                    if not (peso_node is not None and presion_node is not None and llantas_node is not None):
+                        continue
+                        
+                    peso = float(peso_node.text)
+                    presion = float(presion_node.text)
+                    llantas = int(llantas_node.text)
+                    
+                    coords = []
+                    if coords_node is not None:
+                        for wc in coords_node.findall('a:anyType', ns):
+                            x_node = wc.find('f:X/f:us', ns)
+                            y_node = wc.find('f:Y/f:us', ns)
+                            if x_node is not None and y_node is not None:
+                                coords.extend([float(x_node.text), float(y_node.text)])
+                    
+                    return {
+                        "peso": peso,
+                        "presion": presion,
+                        "llantas": llantas,
+                        "coords": coords
+                    }
+        except Exception as e:
+            print(f"Error parseando configuración XML: {e}")
             return None
         return None
 
